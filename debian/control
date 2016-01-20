@@ -1,0 +1,19 @@
+Source: accel-ppp
+Section: net
+Priority: important
+Maintainer: Mihail Vasiliev <mick@corp.linkintel.ru>
+Build-Depends: libmnl-dev, cmake, libtool, gcc
+Standards-Version: 3.8.2
+Homepage: https://accel-ppp.org/
+
+
+Package: accel-ppp
+Architecture: any
+Priority: important
+Section: net
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: The ACCEL-PPP v1.0 is completly new implementation of PPTP/PPPoE/L2TP which was written from scratch.
+   Userspace daemon has its own PPP implementation, so it does not uses pppd and one process (multi-threaded) manages all connections.
+   ACCEL-PPP uses only kernel-mode implementations of pptp/l2tp/pppoe.
+
+
