@@ -84,6 +84,12 @@ static struct lcp_option_t *auth_init(struct ppp_lcp_t *lcp)
 
 	INIT_LIST_HEAD(&ad->auth_opt.auth_list);
 
+	if (conf_noauth) {
+		if (connect_ppp_channel(lcp->ppp))
+			return NULL;
+		return &ad->auth_opt.opt;
+	}
+
 	list_for_each_entry(h, &auth_handlers, entry) {
 		d = h->init(lcp->ppp);
 		d->h = h;
@@ -337,10 +343,8 @@ int __export ppp_auth_succeeded(struct ppp_t *ppp, char *username)
 {
 	struct auth_layer_data_t *ad = container_of(ppp_find_layer_data(ppp, &auth_layer), typeof(*ad), ld);
 
-	if (ap_session_set_username(&ppp->ses, username)) {
-		_free(username);
+	if (ap_session_set_username(&ppp->ses, username))
 		return -1;
-	}
 
 	if (connect_ppp_channel(ppp))
 		return -1;
@@ -355,7 +359,9 @@ void __export ppp_auth_failed(struct ppp_t *ppp, char *username)
 	if (username) {
 		pthread_rwlock_wrlock(&ses_lock);
 		if (!ppp->ses.username)
-			ppp->ses.username = _strdup(username);
+			ppp->ses.username = username;
+		else
+			_free(username);
 		ppp->ses.terminate_cause = TERM_AUTH_ERROR;
 		pthread_rwlock_unlock(&ses_lock);
 		log_ppp_info1("%s: authentication failed\n", username);

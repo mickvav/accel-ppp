@@ -875,6 +875,17 @@ static void ipoe_ifcfg_del(struct ipoe_session *ses, int lock)
 		ipoe_serv_del_addr(ses->serv, ses->siaddr, lock);
 }
 
+static void make_ipv6_intfid(uint64_t *intfid, const uint8_t *hwaddr)
+{
+	uint8_t *a = (uint8_t *)intfid;
+
+	memcpy(a, hwaddr, 3);
+	a[3] = 0xff;
+	a[4] = 0xfe;
+	memcpy(a + 5, hwaddr + 3, 3);
+	a[0] ^= 0x02;
+}
+
 static void __ipoe_session_activate(struct ipoe_session *ses)
 {
 	uint32_t addr;
@@ -933,8 +944,10 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 		ses->ses.ipv6 = ipdb_get_ipv6(&ses->ses);
 		if (!ses->ses.ipv6)
 			log_ppp_warn("ipoe: no free IPv6 address\n");
-		else if (!ses->ses.ipv6->peer_intf_id)
-			ses->ses.ipv6->peer_intf_id = htobe64(1);
+		else {
+			make_ipv6_intfid(&ses->ses.ipv6->peer_intf_id, ses->hwaddr);
+			make_ipv6_intfid(&ses->ses.ipv6->intf_id, ses->serv->hwaddr);
+		}
 	}
 
 	__sync_sub_and_fetch(&stat_starting, 1);
@@ -1145,6 +1158,9 @@ static void ipoe_session_terminated(struct ipoe_session *ses)
 	if (ses->l4_redirect_set)
 		ipoe_change_l4_redirect(ses, 1);
 
+	if (!ses->serv->opt_shared)
+		ses->ctrl.dont_ifcfg = 1;
+
 	ap_session_finished(&ses->ses);
 }
 
@@ -1292,9 +1308,6 @@ static void ipoe_ses_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packe
 	int opt82_match;
 	uint8_t *agent_circuit_id = NULL;
 	uint8_t *agent_remote_id = NULL;
-
-	if (ap_shutdown)
-		return;
 
 	if (conf_verbose) {
 		log_ppp_info2("recv ");
@@ -1583,9 +1596,6 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 	if (serv->timer.tpd)
 		triton_timer_mod(&serv->timer, 0);
 
-	if (ap_shutdown)
-		return;
-
 	if (connlimit_loaded && pack->msg_type == DHCPDISCOVER && connlimit_check(serv->opt_shared ? cl_key_from_mac(pack->hdr->chaddr) : serv->ifindex))
 		return;
 
@@ -1599,6 +1609,9 @@ static void __ipoe_recv_dhcpv4(struct dhcpv4_serv *dhcpv4, struct dhcpv4_packet 
 				dhcpv4_packet_ref(pack);
 				triton_context_call(&opt82_ses->ctx, (triton_event_func)mac_change_detected, pack);
 			}
+
+			if (ap_shutdown)
+				return;
 
 			offer_delay = get_offer_delay();
 			if (offer_delay == -1)
@@ -1768,11 +1781,6 @@ static void ipoe_recv_dhcpv4_relay(struct dhcpv4_packet *pack)
 	struct ipoe_session *ses;
 	int found = 0;
 	//struct dhcpv4_packet *reply;
-
-	if (ap_shutdown) {
-		dhcpv4_packet_free(pack);
-		return;
-	}
 
 	pthread_mutex_lock(&serv->lock);
 	list_for_each_entry(ses, &serv->sessions, entry) {
@@ -2115,6 +2123,9 @@ static void ipoe_serv_release(struct ipoe_serv *serv)
 
 	if (serv->timer.tpd)
 		triton_timer_del(&serv->timer);
+
+	if (serv->opt_up)
+		ipoe_nl_del_interface(serv->ifindex);
 
 	if (serv->vid) {
 		log_info2("ipoe: remove vlan %s\n", serv->ifname);

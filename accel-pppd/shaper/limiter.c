@@ -218,7 +218,7 @@ static int install_police(struct rtnl_handle *rth, int ifindex, int rate, int bu
 	} sel = {
 		.sel.nkeys = 1,
 		.sel.flags = TC_U32_TERMINAL,
-		.key.off = 12,
+//		.key.off = 12,
 	};
 
 	struct tc_police police = {
@@ -247,7 +247,7 @@ static int install_police(struct rtnl_handle *rth, int ifindex, int rate, int bu
 	req.t.tcm_handle = 1;
 	req.t.tcm_parent = 0xffff0000;
 
-	req.t.tcm_info = TC_H_MAKE(100 << 16, ntohs(ETH_P_IP));
+	req.t.tcm_info = TC_H_MAKE(100 << 16, ntohs(ETH_P_ALL));
 
 	addattr_l(&req.n, sizeof(req), TCA_KIND, "u32", 4);
 
@@ -293,7 +293,7 @@ static int install_htb_ifb(struct rtnl_handle *rth, int ifindex, __u32 priority,
 
 	struct qdisc_opt opt1 = {
 		.kind = "htb",
-		.handle = 0x00010001 + priority,
+		.handle = 0x00010000 + priority,
 		.parent = 0x00010000,
 		.rate = rate,
 		.buffer = burst,
@@ -361,6 +361,7 @@ static int install_htb_ifb(struct rtnl_handle *rth, int ifindex, __u32 priority,
 	tail3 = NLMSG_TAIL(&req.n);
 	addattr_l(&req.n, MAX_MSG, TCA_ACT_OPTIONS, NULL, 0);
 	addattr_l(&req.n, MAX_MSG, TCA_SKBEDIT_PARMS, &p1, sizeof(p1));
+	priority--;
 	addattr_l(&req.n, MAX_MSG, TCA_SKBEDIT_PRIORITY, &priority, sizeof(priority));
 	tail3->rta_len = (void *)NLMSG_TAIL(&req.n) - (void *)tail3;
 
@@ -445,14 +446,14 @@ static int remove_ingress(struct rtnl_handle *rth, int ifindex)
 static int remove_htb_ifb(struct rtnl_handle *rth, int ifindex, int priority)
 {
 	struct qdisc_opt opt = {
-		.handle = 0x00010001 + priority,
+		.handle = 0x00010000 + priority,
 		.parent = 0x00010000,
 	};
 
 	return tc_qdisc_modify(rth, conf_ifb_ifindex, RTM_DELTCLASS, 0, &opt);
 }
 
-int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int up_speed, int up_burst)
+int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int up_speed, int up_burst, int idx)
 {
 	struct rtnl_handle rth;
 	int r;
@@ -478,9 +479,9 @@ int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int 
 	if (conf_up_limiter == LIM_POLICE)
 		r = install_police(&rth, ses->ifindex, up_speed, up_burst);
 	else {
-		r = install_htb_ifb(&rth, ses->ifindex, ses->unit_idx + 1, up_speed, up_burst);
+		r = install_htb_ifb(&rth, ses->ifindex, idx, up_speed, up_burst);
 		if (r == 0)
-			r = install_leaf_qdisc(&rth, conf_ifb_ifindex, 0x00010001 + ses->unit_idx + 1, (1 + ses->unit_idx + 1) << 16);
+			r = install_leaf_qdisc(&rth, conf_ifb_ifindex, 0x00010000 + idx, idx << 16);
 	}
 
 	if (conf_fwmark)
@@ -491,7 +492,7 @@ int install_limiter(struct ap_session *ses, int down_speed, int down_burst, int 
 	return r;
 }
 
-int remove_limiter(struct ap_session *ses)
+int remove_limiter(struct ap_session *ses, int idx)
 {
 	struct rtnl_handle rth;
 
@@ -504,7 +505,7 @@ int remove_limiter(struct ap_session *ses)
 	remove_ingress(&rth, ses->ifindex);
 
 	if (conf_up_limiter == LIM_HTB)
-		remove_htb_ifb(&rth, ses->ifindex, ses->unit_idx + 1);
+		remove_htb_ifb(&rth, ses->ifindex, idx);
 
 	rtnl_close(&rth);
 

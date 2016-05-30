@@ -142,8 +142,15 @@ static void ev_ses_finished(struct ap_session *ses)
 	if (pd->clientid)
 		_free(pd->clientid);
 
-	if (ses->ipv6_dp)
+	if (ses->ipv6_dp) {
+		if (pd->dp_active) {
+			struct ipv6db_addr_t *p;
+			list_for_each_entry(p, &ses->ipv6_dp->prefix_list, entry)
+				ip6route_del(0, &p->addr, p->prefix_len);
+		}
+
 		ipdb_put_ipv6_prefix(ses, ses->ipv6_dp);
+	}
 
 	triton_md_unregister_handler(&pd->hnd, 1);
 
@@ -297,7 +304,7 @@ static void dhcpv6_send_reply(struct dhcpv6_packet *req, struct dhcpv6_pd *pd, i
 					ia_addr->pref_lifetime = htonl(conf_pref_lifetime);
 					ia_addr->valid_lifetime = htonl(conf_valid_lifetime);
 
-					if (a->installed) {
+					if (!a->installed) {
 						if (a->prefix_len > 64)
 							ip6route_add(ses->ifindex, &a->addr, a->prefix_len, 0);
 						else {
