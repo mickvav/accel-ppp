@@ -1,0 +1,8 @@
+#!/usr/bin/make -f
+
+configure := -DCPACK_TYPE=Debian7 -DCMAKE_INSTALL_PREFIX=/usr -DNETSNMP=FALSE -DIGNORE_GIT=TRUE -DLUA=TRUE
+install :=
+
+%:
+	dh $@  --buildsystem=cmake
+
