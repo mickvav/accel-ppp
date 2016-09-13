@@ -28,7 +28,8 @@
 #include "memdebug.h"
 
 int __export conf_ppp_verbose;
-int conf_unit_cache = 0;
+int conf_unit_cache;
+static int conf_unit_preallocate;
 
 #define PPP_BUF_SIZE 8192
 static mempool_t buf_pool;
@@ -110,7 +111,11 @@ int __export establish_ppp(struct ppp_t *ppp)
 	ppp->chan_hnd.fd = ppp->chan_fd;
 	ppp->chan_hnd.read = ppp_chan_read;
 
-	log_ppp_debug("ppp establishing\n");
+	if (conf_unit_preallocate) {
+		if (connect_ppp_channel(ppp))
+			goto exit_close_chan;
+	} else
+		log_ppp_debug("ppp establishing\n");
 
 	if (ap_session_starting(&ppp->ses))
 		goto exit_close_chan;
@@ -132,6 +137,9 @@ int __export connect_ppp_channel(struct ppp_t *ppp)
 {
 	struct pppunit_cache *uc = NULL;
 	struct ifreq ifr;
+
+	if (ppp->unit_fd != -1)
+		return 0;
 
 	if (uc_size) {
 		pthread_mutex_lock(&uc_lock);
@@ -230,9 +238,8 @@ static void destablish_ppp(struct ppp_t *ppp)
 {
 	struct pppunit_cache *uc = NULL;
 
-	ap_session_finished(&ppp->ses);
-
 	if (ppp->unit_fd < 0) {
+		ap_session_finished(&ppp->ses);
 		destroy_ppp_channel(ppp);
 		return;
 	}
@@ -240,15 +247,28 @@ static void destablish_ppp(struct ppp_t *ppp)
 	if (conf_unit_cache) {
 		struct ifreq ifr;
 
+		if (ppp->ses.net != def_net) {
+			if (net->move_link(def_net, ppp->ses.ifindex)) {
+				log_ppp_warn("failed to attach to default namespace\n");
+				triton_md_unregister_handler(&ppp->unit_hnd, 1);
+				goto skip;
+			}
+			ppp->ses.net = def_net;
+			net = def_net;
+		}
+
 		sprintf(ifr.ifr_newname, "ppp%i", ppp->ses.unit_idx);
 		if (strcmp(ifr.ifr_newname, ppp->ses.ifname)) {
 			strncpy(ifr.ifr_name, ppp->ses.ifname, IFNAMSIZ);
 			if (net->sock_ioctl(SIOCSIFNAME, &ifr)) {
+				log_ppp_warn("failed to rename ppp to default name\n");
 				triton_md_unregister_handler(&ppp->unit_hnd, 1);
 				goto skip;
 			}
 		}
+	}
 
+	if (conf_unit_cache) {
 		triton_md_unregister_handler(&ppp->unit_hnd, 0);
 
 		uc = mempool_alloc(uc_pool);
@@ -258,6 +278,8 @@ static void destablish_ppp(struct ppp_t *ppp)
 		triton_md_unregister_handler(&ppp->unit_hnd, 1);
 
 skip:
+	ap_session_finished(&ppp->ses);
+
 	ppp->unit_fd = -1;
 
 	destroy_ppp_channel(ppp);
@@ -362,6 +384,9 @@ cont:
 			break;
 		}
 
+		if (ppp->buf_size == 0)
+			break;
+
 		if (ppp->buf_size < 2) {
 			log_ppp_error("ppp_chan_read: short read %i\n", ppp->buf_size);
 			continue;
@@ -409,6 +434,9 @@ cont:
 			}
 			break;
 		}
+
+		if (ppp->buf_size == 0)
+			break;
 
 		if (ppp->buf_size < 2) {
 			log_ppp_error("ppp_unit_read: short read %i\n", ppp->buf_size);
@@ -693,6 +721,12 @@ static void load_config(void)
 		conf_unit_cache = atoi(opt);
 	else
 		conf_unit_cache = 0;
+
+	opt = conf_get_opt("ppp", "unit-preallocate");
+	if (opt)
+		conf_unit_preallocate = atoi(opt);
+	else
+		conf_unit_preallocate = 0;
 }
 
 static void init(void)

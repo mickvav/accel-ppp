@@ -203,7 +203,12 @@ static void ipoe_serv_timeout(struct triton_timer_t *t);
 
 static void ipoe_ctx_switch(struct triton_context_t *ctx, void *arg)
 {
-	net = &def_net;
+	if (arg) {
+		struct ap_session *s = arg;
+		net = s->net;
+	} else
+		net = def_net;
+
 	log_switch(ctx, arg);
 }
 
@@ -892,6 +897,19 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 	} else
 		ses->ctrl.dont_ifcfg = 0;
 
+	if (ses->arph) {
+		if (ses->arph->ar_tpa == ses->router) {
+			memcpy(ses->arph->ar_tha, ses->arph->ar_sha, ETH_ALEN);
+			memcpy(ses->arph->ar_sha, ses->serv->hwaddr, ETH_ALEN);
+			ses->arph->ar_tpa = ses->arph->ar_spa;
+			ses->arph->ar_spa = ses->router;
+			arp_send(ses->serv->ifindex, ses->arph);
+		}
+
+		_free(ses->arph);
+		ses->arph = NULL;
+	}
+
 	if (ses->serv->opt_mode == MODE_L2 && ses->serv->opt_ipv6 && sock6_fd != -1) {
 		ses->ses.ipv6 = ipdb_get_ipv6(&ses->ses);
 		if (!ses->ses.ipv6)
@@ -919,14 +937,6 @@ static void __ipoe_session_activate(struct ipoe_session *ses)
 
 		dhcpv4_packet_free(ses->dhcpv4_request);
 		ses->dhcpv4_request = NULL;
-	} else if (ses->arph) {
-		if (ses->arph->ar_tpa == ses->router) {
-			memcpy(ses->arph->ar_tha, ses->serv->hwaddr, ETH_ALEN);
-			arp_send(ses->serv->ifindex, ses->arph);
-		}
-
-		_free(ses->arph);
-		ses->arph = NULL;
 	}
 
 	ses->timer.expire = ipoe_session_timeout;
@@ -2462,6 +2472,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	in_addr_t opt_src = conf_src;
 	int opt_arp = conf_arp;
 	struct ifreq ifr;
+	uint8_t hwaddr[ETH_ALEN];
 
 	str0 = strchr(opt, ',');
 	if (str0) {
@@ -2660,6 +2671,8 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 		return;
 	}
 
+	memcpy(hwaddr, ifr.ifr_hwaddr.sa_data, ETH_ALEN);
+
 	ioctl(sock_fd, SIOCGIFFLAGS, &ifr);
 
 	if ((ifr.ifr_flags & IFF_UP) && opt_shared == 0) {
@@ -2707,7 +2720,7 @@ static void add_interface(const char *ifname, int ifindex, const char *opt, int 
 	INIT_LIST_HEAD(&serv->sessions);
 	INIT_LIST_HEAD(&serv->disc_list);
 	INIT_LIST_HEAD(&serv->req_list);
-	memcpy(serv->hwaddr, ifr.ifr_hwaddr.sa_data, ETH_ALEN);
+	memcpy(serv->hwaddr, hwaddr, ETH_ALEN);
 	serv->disc_timer.expire = ipoe_serv_disc_timer;
 
 	triton_context_register(&serv->ctx, NULL);
@@ -3255,7 +3268,7 @@ static void load_config(void)
 	if (!s)
 		return;
 
-	net = &def_net;
+	net = def_net;
 
 	opt = conf_get_opt("ipoe", "username");
 	if (opt) {

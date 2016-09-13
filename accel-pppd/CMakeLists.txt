@@ -47,10 +47,11 @@ IF (SHAPER)
 	ADD_SUBDIRECTORY(shaper)
 ENDIF (SHAPER)
 
-ADD_SUBDIRECTORY(net)
-
 INCLUDE(CheckIncludeFile)
 CHECK_INCLUDE_FILE("linux/netfilter/ipset/ip_set.h" HAVE_IPSET)
+
+INCLUDE(CheckFunctionExists)
+CHECK_FUNCTION_EXISTS(setns HAVE_SETNS)
 
 ADD_EXECUTABLE(accel-pppd
 	memdebug.c
